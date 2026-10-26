@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="wintabs.PlusButtonTestSuite" tests="15" failures="0" errors="0" skipped="0" time="0.018">
+  <testcase classname="wintabs.PlusButtonTest" name="test_initial_state_zero_tabs" time="0.0000">
+  </testcase>
+  <testcase classname="wintabs.PlusButtonTest" name="test_zero_tabs_with_stale_last_tab_right" time="0.0000">
+  </testcase>
+  <testcase classname="wintabs.PlusButtonTest" name="test_single_tab_placement" time="0.0000">
+  </testcase>
+  <testcase classname="wintabs.PlusButtonTest" name="test_multiple_tabs_sequential_placement" time="0.0000">
+  </testcase>
+  <testcase classname="wintabs.PlusButtonTest" name="test_tab_rename_widening" time="0.0000">
+  </testcase>
+  <testcase classname="wintabs.PlusButtonTest" name="test_tab_rename_shrinking" time="0.0000">
+  </testcase>
+  <testcase classname="wintabs.PlusButtonTest" name="test_tab_closure_shifts_button_left" time="0.0000">
+  </testcase>
+  <testcase classname="wintabs.PlusButtonTest" name="test_closing_all_tabs_resets_position" time="0.0000">
+  </testcase>
+  <testcase classname="wintabs.PlusButtonTest" name="test_max_tabs_boundary" time="0.0000">
+  </testcase>
+  <testcase classname="wintabs.PlusButtonTest" name="test_window_overflow_clamping" time="0.0000">
+  </testcase>
+  <testcase classname="wintabs.PlusButtonTest" name="test_window_resize_expansion" time="0.0000">
+  </testcase>
+  <testcase classname="wintabs.PlusButtonTest" name="test_degenerate_dimensions" time="0.0000">
+  </testcase>
+  <testcase classname="wintabs.PlusButtonTest" name="test_null_pointers_safety" time="0.0000">
+  </testcase>
+  <testcase classname="wintabs.PlusButtonTest" name="test_win32_window_and_button_creation" time="0.0050">
+  </testcase>
+  <testcase classname="wintabs.PlusButtonTest" name="test_win32_plus_button_click_dispatch" time="0.0127">
+  </testcase>
+</testsuite>

@@ -20,6 +20,7 @@
 #include <commctrl.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#include "wintabs.h"
 
 #ifdef MSVC4
 #define TVINSERTSTRUCT  TV_INSERTSTRUCT
@@ -402,6 +403,7 @@ static INT_PTR CALLBACK GenericMainDlgProc(HWND hwnd, UINT msg,
     switch (msg) {
       case WM_INITDIALOG:
         dp.hwnd = hwnd;
+        SetForegroundWindow(hwnd);
         create_controls(hwnd, "");     /* Open and Cancel buttons etc */
         SetWindowText(hwnd, dp.wintitle);
         SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
@@ -422,7 +424,8 @@ static INT_PTR CALLBACK GenericMainDlgProc(HWND hwnd, UINT msg,
         {                              /* centre the window */
             RECT rs, rd;
 
-            hw = GetDesktopWindow();
+            hw = (opt_tab_parent_hwnd && IsWindow(opt_tab_parent_hwnd) && IsWindowVisible(opt_tab_parent_hwnd)) ?
+                 opt_tab_parent_hwnd : GetDesktopWindow();
             if (GetWindowRect(hw, &rs) && GetWindowRect(hwnd, &rd))
                 MoveWindow(hwnd,
                            (rs.right + rs.left + rd.left - rd.right) / 2,
@@ -557,6 +560,9 @@ static INT_PTR CALLBACK GenericMainDlgProc(HWND hwnd, UINT msg,
          * flicker.
          */
         ShowWindow(hwnd, SW_SHOWNORMAL);
+        SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetForegroundWindow(hwnd);
+        SetActiveWindow(hwnd);
 
         /*
          * Set the flag that activates a couple of the other message
@@ -710,9 +716,18 @@ bool do_config(Conf *conf)
     dlg_auto_set_fixed_pitch_flag(&dp);
     dp.shortcuts['g'] = true;          /* the treeview: `Cate&gory' */
 
+    if (opt_tab_parent_hwnd && IsWindow(opt_tab_parent_hwnd)) {
+        SendMessage(opt_tab_parent_hwnd, WM_APP_TAB_CONFIG_OPEN, 0, (LPARAM)GetCurrentProcessId());
+    }
+
     ret =
-        SaneDialogBox(hinst, MAKEINTRESOURCE(IDD_MAINBOX), NULL,
-                  GenericMainDlgProc);
+        SaneDialogBox(hinst, MAKEINTRESOURCE(IDD_MAINBOX),
+                      NULL,
+                      GenericMainDlgProc);
+
+    if (opt_tab_parent_hwnd && IsWindow(opt_tab_parent_hwnd)) {
+        SendMessage(opt_tab_parent_hwnd, WM_APP_TAB_CONFIG_CLOSE, 0, 0);
+    }
 
     ctrl_free_box(ctrlbox);
     winctrl_cleanup(&ctrls_panel);

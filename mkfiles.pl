@@ -728,7 +728,7 @@ if (defined $makefiles{'vc'}) {
         for ($i=0; $i<=$#objlines; $i++) {
             print "$objlines[$i]\n";
         }
-        print "<<\n";
+        print "<<KEEP\n";
         print "\tlink \$(LFLAGS) \$(XLFLAGS) -out:\$(BUILDDIR)$prog.exe -map:\$(BUILDDIR)$prog.map -nologo -subsystem:$subsys\$(SUBSYSVER) \@$inlinefilename\n\n";
     }
     foreach $d (&deps("\$(BUILDDIR)X.obj", "\$(BUILDDIR)X.res", $dirpfx, "\\", "vc")) {
