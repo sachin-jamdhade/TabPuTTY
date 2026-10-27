@@ -1,0 +1,30 @@
+name: TabPuTTY CI
+
+on:
+  push:
+    branches: [ master, main, "modernize/**" ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build TabPuTTY and Unit Tests
+        run: cmake --build build --config Release --target putty test_wintabs
+
+      - name: Run WinTabs Unit Tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Upload TabPuTTY Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TabPuTTY-Windows-x64
+          path: build/Release/putty.exe
