@@ -2,15 +2,16 @@
 #define TRACE_HELPER_H
 
 #ifdef TABPUTTY_TRACE
-#include <windows.h>
 #include <stdio.h>
+#include <windows.h>
+
 
 static inline void log_trace(const char *msg) {
-    FILE *f = fopen("putty_trace.log", "a");
-    if (f) {
-        fprintf(f, "[PID %lu] %s\n", GetCurrentProcessId(), msg);
-        fclose(f);
-    }
+  FILE *f = fopen("putty_trace.log", "a");
+  if (f) {
+    fprintf(f, "[PID %lu] %s\n", GetCurrentProcessId(), msg);
+    fclose(f);
+  }
 }
 #define TRACE_LOG(msg) log_trace(msg)
 #else
