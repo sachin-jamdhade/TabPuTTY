@@ -907,6 +907,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
 
     gui_terminal_ready(wgs->term_hwnd, &wgs->seat, wgs->backend);
 
+    start_backend();
+
     while (1) {
         int n;
         DWORD timeout;
@@ -1131,6 +1133,10 @@ void cleanup_exit(int code)
 
     /* Clean up COM. */
     CoUninitialize();
+
+    if (opt_tab_parent_hwnd && IsWindow(opt_tab_parent_hwnd) && wgs.term_hwnd && IsWindow(wgs.term_hwnd)) {
+        SendMessage(opt_tab_parent_hwnd, WM_APP_TAB_CLOSE, (WPARAM)wgs.term_hwnd, 0);
+    }
 
     exit(code);
 }

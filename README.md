@@ -61,7 +61,7 @@ Each terminal session runs with full process isolation inside an embedded tab un
 | [`putty/windows/wintabs.c`](file:///e:/PublicApps/putty/putty/windows/wintabs.c) | Implementation of the Tab Host window procedure, layout engine, compact plus button, rename dialog, context menu, and process lifecycle. |
 | [`putty/windows/window.c`](file:///e:/PublicApps/putty/putty/windows/window.c) | Child terminal session window logic; hooks keyboard accelerators and strips title bars/furniture when embedded. |
 | [`putty/windows/test_wintabs.c`](file:///e:/PublicApps/putty/putty/windows/test_wintabs.c) | Comprehensive automated test suite validating layout math, boundary limits, Win32 window creation, and command dispatch. |
-| [`putty/windows/CMakeLists.txt`](file:///e:/PublicApps/putty/putty/windows/CMakeLists.txt) | CMake build configuration including `wintabs.c` into `putty.exe`. |
+| [`putty/windows/Makefile.vc`](file:///e:/PublicApps/putty/putty/windows/Makefile.vc) | MSVC build configuration including `wintabs.obj` into `putty.exe`. |
 
 ---
 
@@ -69,21 +69,20 @@ Each terminal session runs with full process isolation inside an embedded tab un
 
 ### Prerequisites
 - Visual Studio (2015, 2017, 2019, 2022, or 2026) with C/C++ desktop development tools.
-- CMake 3.10+ (available in the environment or installed via Visual Studio).
+- `nmake` command-line utility (available in the **Developer Command Prompt for VS** or Developer PowerShell).
 
 ### Build Instructions
 1. Open the **x64 Native Tools Command Prompt for VS** (or launch VS developer environment in PowerShell):
    ```powershell
    & "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64
    ```
-2. Navigate to the repository directory:
+2. Navigate to the `windows` directory:
    ```cmd
-   cd e:\PublicApps\putty\putty
+   cd e:\PublicApps\putty\putty\windows
    ```
-3. Configure and compile `putty.exe` using CMake:
+3. Compile `putty.exe`:
    ```cmd
-   cmake -B build -G "NMake Makefiles"
-   cmake --build build --target putty
+   nmake /f Makefile.vc putty.exe
    ```
 
 ---
@@ -102,10 +101,12 @@ The tab subsystem includes a complete automated test runner covering all scenari
 - **Click Command (`IDM_TAB_NEW`) Dispatch**
 
 ### Running Tests
-To build and execute the test runner via CMake:
+To compile and execute the test runner:
 ```cmd
-cmake --build build --target test_wintabs
-build\test_wintabs.exe
+cd windows
+cl /nologo /O1 -I..\. -I..\charset -I..\windows -I..\unix /D_WINDOWS /c test_wintabs.c
+link /nologo /subsystem:console test_wintabs.obj wintabs.obj user32.lib comctl32.lib gdi32.lib advapi32.lib shell32.lib /out:test_wintabs.exe
+test_wintabs.exe
 ```
 
 ### JUnit XML Report
