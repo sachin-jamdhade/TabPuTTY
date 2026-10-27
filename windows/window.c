@@ -30,6 +30,9 @@
 #include <commctrl.h>
 #include <richedit.h>
 #include <mmsystem.h>
+#include "wintabs.h"
+
+static HWND g_term_hwnd = NULL;
 
 /* From MSDN: In the WM_SYSCOMMAND message, the four low-order bits of
  * wParam are used by Windows, and should be masked off, so we shouldn't
@@ -481,6 +484,34 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
 
     init_winfuncs();
 
+    /* Check for tabbed host flags in command line */
+    {
+        char *tabchild_str = strstr(cmdline, "-tab-child");
+        if (tabchild_str) {
+            char *p = tabchild_str + 10;
+            while (*p == ' ') p++;
+            char *end = NULL;
+            unsigned long long val = strtoull(p, &end, 16);
+            if (val != 0) {
+                opt_tab_parent_hwnd = (HWND)(uintptr_t)val;
+                memset(tabchild_str, ' ', (size_t)(end - tabchild_str));
+            }
+        }
+        char *notabs_str = strstr(cmdline, "-notabs");
+        if (notabs_str) {
+            opt_tabbed_mode = false;
+            memset(notabs_str, ' ', 7);
+        }
+    }
+
+    /* If running in tabbed mode as top-level app, launch Tab Host */
+    if (opt_tabbed_mode && !opt_tab_parent_hwnd) {
+        HWND host_wnd = tabhost_create_window(inst, show, cmdline);
+        if (host_wnd) {
+            return tabhost_run_message_loop(host_wnd);
+        }
+    }
+
     setup_gui_timing();
 
     WinGuiSeat *wgs = snew(WinGuiSeat);
@@ -544,7 +575,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     }
 
     {
-        int winmode = WS_OVERLAPPEDWINDOW | WS_VSCROLL;
+        int winmode = WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
         int exwinmode = 0;
         const struct BackendVtable *vt =
             backend_vt_from_proto(be_default_protocol);
@@ -564,6 +595,19 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         if (conf_get_bool(wgs->conf, CONF_sunken_edge))
             exwinmode |= WS_EX_CLIENTEDGE;
 
+        /*
+         * When running as an embedded tab child, create the window
+         * directly with WS_CHILD style so that it never has a title
+         * bar, borders, or caption. This also ensures extra_width/
+         * extra_height are computed correctly below.
+         */
+        if (opt_tab_parent_hwnd) {
+            winmode = WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VISIBLE;
+            if (conf_get_bool(wgs->conf, CONF_scrollbar))
+                winmode |= WS_VSCROLL;
+            exwinmode = 0;
+        }
+
 #ifdef TEST_ANSI_WINDOW
         /* For developer testing of ANSI window support, pretend
          * CreateWindowExW failed */
@@ -575,9 +619,14 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         sw_DispatchMessage = DispatchMessageW;
         sw_DefWindowProc = DefWindowProcW;
         wgs->term_hwnd = CreateWindowExW(
-            exwinmode, terminal_window_class_w(), uappname,
-            winmode, CW_USEDEFAULT, CW_USEDEFAULT,
-            guess_width, guess_height, NULL, NULL, inst, NULL);
+            exwinmode, terminal_window_class_w(),
+            opt_tab_parent_hwnd ? L"" : uappname,
+            winmode,
+            opt_tab_parent_hwnd ? 0 : CW_USEDEFAULT,
+            opt_tab_parent_hwnd ? 0 : CW_USEDEFAULT,
+            guess_width, guess_height,
+            opt_tab_parent_hwnd ? opt_tab_parent_hwnd : NULL,
+            NULL, inst, NULL);
 #endif
 
 #if defined LEGACY_WINDOWS || defined TEST_ANSI_WINDOW
@@ -589,9 +638,14 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
             sw_DispatchMessage = DispatchMessageA;
             sw_DefWindowProc = DefWindowProcA;
             wgs->term_hwnd = CreateWindowExA(
-                exwinmode, terminal_window_class_a(), appname,
-                winmode, CW_USEDEFAULT, CW_USEDEFAULT,
-                guess_width, guess_height, NULL, NULL, inst, NULL);
+                exwinmode, terminal_window_class_a(),
+                opt_tab_parent_hwnd ? "" : appname,
+                winmode,
+                opt_tab_parent_hwnd ? 0 : CW_USEDEFAULT,
+                opt_tab_parent_hwnd ? 0 : CW_USEDEFAULT,
+                guess_width, guess_height,
+                opt_tab_parent_hwnd ? opt_tab_parent_hwnd : NULL,
+                NULL, inst, NULL);
         }
 #endif
 
@@ -605,6 +659,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     }
 
     SetWindowLongPtr(wgs->term_hwnd, GWLP_USERDATA, (LONG_PTR)wgs);
+    g_term_hwnd = wgs->term_hwnd;
 
     /*
      * Initialise the fonts, simultaneously correcting the guesses
@@ -640,10 +695,15 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         GetClientRect(wgs->term_hwnd, &cr);
         wgs->offset_width = wgs->offset_height =
             conf_get_int(wgs->conf, CONF_window_border);
-        wgs->extra_width =
-            wr.right - wr.left - cr.right + cr.left + wgs->offset_width*2;
-        wgs->extra_height =
-            wr.bottom - wr.top - cr.bottom + cr.top +wgs->offset_height*2;
+        if (opt_tab_parent_hwnd) {
+            wgs->extra_width = wgs->offset_width * 2;
+            wgs->extra_height = wgs->offset_height * 2;
+        } else {
+            wgs->extra_width =
+                wr.right - wr.left - cr.right + cr.left + wgs->offset_width*2;
+            wgs->extra_height =
+                wr.bottom - wr.top - cr.bottom + cr.top + wgs->offset_height*2;
+        }
     }
 
     /*
@@ -738,7 +798,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         int j;
         char *str;
 
-        wgs->popup_menus[SYSMENU].menu = GetSystemMenu(wgs->term_hwnd, false);
+        wgs->popup_menus[SYSMENU].menu = opt_tab_parent_hwnd ?
+            CreatePopupMenu() : GetSystemMenu(wgs->term_hwnd, false);
         wgs->popup_menus[CTXMENU].menu = CreatePopupMenu();
 
         for (j = 0; j < lenof(wgs->popup_menus); j++) {
@@ -794,10 +855,57 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     /*
      * Finally show the window!
      */
-    ShowWindow(wgs->term_hwnd, show);
-    SetForegroundWindow(wgs->term_hwnd);
+    if (opt_tab_parent_hwnd) {
+        /*
+         * Ensure all overlapped/popup styles are stripped and the
+         * window is a plain child.  The window was already created
+         * with WS_CHILD above, but belt-and-braces in case the
+         * class default or other init code re-added anything.
+         */
+        LONG_PTR style = GetWindowLongPtr(wgs->term_hwnd, GWL_STYLE);
+        style &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME |
+                   WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU |
+                   WS_BORDER | WS_DLGFRAME);
+        style |= (WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
+        SetWindowLongPtr(wgs->term_hwnd, GWL_STYLE, style);
 
-    term_set_focus(wgs->term, GetForegroundWindow() == wgs->term_hwnd);
+        /* Strip extended styles that produce visible edges/frames */
+        LONG_PTR exstyle = GetWindowLongPtr(wgs->term_hwnd, GWL_EXSTYLE);
+        exstyle &= ~(WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE |
+                     WS_EX_DLGMODALFRAME | WS_EX_STATICEDGE | WS_EX_APPWINDOW);
+        SetWindowLongPtr(wgs->term_hwnd, GWL_EXSTYLE, exstyle);
+
+        /* Reparent under the Tab Host container */
+        SetParent(wgs->term_hwnd, opt_tab_parent_hwnd);
+
+        /*
+         * Force Windows to recalculate the non-client area (which is
+         * now zero) so no residual title bar or border is painted.
+         */
+        SetWindowPos(wgs->term_hwnd, NULL, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+
+        /*
+         * Recalculate extra_width/extra_height after the style
+         * change so that future resize logic uses the correct
+         * (now minimal) non-client area measurements.
+         */
+        wgs->offset_width = wgs->offset_height = conf_get_int(wgs->conf, CONF_window_border);
+        wgs->extra_width = wgs->offset_width * 2;
+        wgs->extra_height = wgs->offset_height * 2;
+
+        /* Register with Tab Host */
+        PostMessage(opt_tab_parent_hwnd, WM_APP_TAB_REGISTER,
+                    (WPARAM)wgs->term_hwnd, (LPARAM)GetCurrentProcessId());
+
+        ShowWindow(wgs->term_hwnd, SW_SHOW);
+        SetFocus(wgs->term_hwnd);
+    } else {
+        ShowWindow(wgs->term_hwnd, show);
+        SetForegroundWindow(wgs->term_hwnd);
+    }
+
+    term_set_focus(wgs->term, opt_tab_parent_hwnd ? true : (GetForegroundWindow() == wgs->term_hwnd));
     UpdateWindow(wgs->term_hwnd);
 
     gui_terminal_ready(wgs->term_hwnd, &wgs->seat, wgs->backend);
@@ -1004,6 +1112,16 @@ void cleanup_exit(int code)
     /*
      * Clean up.
      */
+    if (opt_tab_parent_hwnd && IsWindow(opt_tab_parent_hwnd)) {
+        struct WinGuiSeatListNode *curr;
+        for (curr = wgslisthead.next; curr != &wgslisthead; curr = curr->next) {
+            WinGuiSeat *wgs = container_of(
+                curr, WinGuiSeat, wgslistnode);
+            if (wgs->term_hwnd && IsWindow(wgs->term_hwnd))
+                SendMessage(opt_tab_parent_hwnd, WM_APP_TAB_CLOSE, (WPARAM)wgs->term_hwnd, 0);
+        }
+    }
+
     while (wgslisthead.next != &wgslisthead) {
         WinGuiSeat *wgs = container_of(
             wgslisthead.next, WinGuiSeat, wgslistnode);
@@ -1016,6 +1134,10 @@ void cleanup_exit(int code)
 
     /* Clean up COM. */
     CoUninitialize();
+
+    if (opt_tab_parent_hwnd && IsWindow(opt_tab_parent_hwnd) && g_term_hwnd && IsWindow(g_term_hwnd)) {
+        SendMessage(opt_tab_parent_hwnd, WM_APP_TAB_CLOSE, (WPARAM)g_term_hwnd, 0);
+    }
 
     exit(code);
 }
@@ -1824,8 +1946,13 @@ static void reset_window(WinGuiSeat *wgs, int reinit)
          * the window so it's the font size or the terminal itself.
          */
 
-        wgs->extra_width = wr.right - wr.left - cr.right + cr.left;
-        wgs->extra_height = wr.bottom - wr.top - cr.bottom + cr.top;
+        if (opt_tab_parent_hwnd) {
+            wgs->extra_width = wgs->offset_width * 2;
+            wgs->extra_height = wgs->offset_height * 2;
+        } else {
+            wgs->extra_width = wr.right - wr.left - cr.right + cr.left;
+            wgs->extra_height = wr.bottom - wr.top - cr.bottom + cr.top;
+        }
 
         if (resize_action != RESIZE_TERM) {
             if (wgs->font_width != win_width/wgs->term->cols ||
@@ -1901,15 +2028,21 @@ static void reset_window(WinGuiSeat *wgs, int reinit)
      */
     if (reinit>0) {
         wgs->offset_width = wgs->offset_height = window_border;
-        wgs->extra_width =
-            wr.right - wr.left - cr.right + cr.left + wgs->offset_width*2;
-        wgs->extra_height =
-            wr.bottom - wr.top - cr.bottom + cr.top + wgs->offset_height*2;
+        if (opt_tab_parent_hwnd) {
+            wgs->extra_width = wgs->offset_width * 2;
+            wgs->extra_height = wgs->offset_height * 2;
+        } else {
+            wgs->extra_width =
+                wr.right - wr.left - cr.right + cr.left + wgs->offset_width*2;
+            wgs->extra_height =
+                wr.bottom - wr.top - cr.bottom + cr.top + wgs->offset_height*2;
+        }
 
-        if (win_width != (wgs->font_width*wgs->term->cols +
-                          wgs->offset_width*2) ||
-            win_height != (wgs->font_height*wgs->term->rows +
-                           wgs->offset_height*2)) {
+        if (!opt_tab_parent_hwnd &&
+            (win_width != (wgs->font_width*wgs->term->cols +
+                           wgs->offset_width*2) ||
+             win_height != (wgs->font_height*wgs->term->rows +
+                            wgs->offset_height*2))) {
 
             /* If this is too large windows will resize it to the maximum
              * allowed window size, we will then be back in here and resize
@@ -1933,10 +2066,15 @@ static void reset_window(WinGuiSeat *wgs, int reinit)
         (resize_action == RESIZE_EITHER && reinit<0) ||
         reinit>0) {
         wgs->offset_width = wgs->offset_height = window_border;
-        wgs->extra_width =
-            wr.right - wr.left - cr.right + cr.left + wgs->offset_width*2;
-        wgs->extra_height =
-            wr.bottom - wr.top - cr.bottom + cr.top + wgs->offset_height*2;
+        if (opt_tab_parent_hwnd) {
+            wgs->extra_width = wgs->offset_width * 2;
+            wgs->extra_height = wgs->offset_height * 2;
+        } else {
+            wgs->extra_width =
+                wr.right - wr.left - cr.right + cr.left + wgs->offset_width*2;
+            wgs->extra_height =
+                wr.bottom - wr.top - cr.bottom + cr.top + wgs->offset_height*2;
+        }
 
         if (win_width != (wgs->font_width*wgs->term->cols +
                           wgs->offset_width*2) ||
@@ -1979,10 +2117,12 @@ static void reset_window(WinGuiSeat *wgs, int reinit)
                 }
             }
 
-            SetWindowPos(wgs->term_hwnd, NULL, 0, 0,
-                         wgs->font_width*wgs->term->cols + wgs->extra_width,
-                         wgs->font_height*wgs->term->rows + wgs->extra_height,
-                         SWP_NOMOVE | SWP_NOZORDER);
+            if (!opt_tab_parent_hwnd) {
+                SetWindowPos(wgs->term_hwnd, NULL, 0, 0,
+                             wgs->font_width*wgs->term->cols + wgs->extra_width,
+                             wgs->font_height*wgs->term->rows + wgs->extra_height,
+                             SWP_NOMOVE | SWP_NOZORDER);
+            }
 
             InvalidateRect(wgs->term_hwnd, NULL, true);
         }
@@ -2000,10 +2140,15 @@ static void reset_window(WinGuiSeat *wgs, int reinit)
         wgs->offset_width = (win_width-wgs->font_width*wgs->term->cols)/2;
         wgs->offset_height = (win_height-wgs->font_height*wgs->term->rows)/2;
 
-        wgs->extra_width =
-            wr.right - wr.left - cr.right + cr.left + wgs->offset_width*2;
-        wgs->extra_height =
-            wr.bottom - wr.top - cr.bottom + cr.top + wgs->offset_height*2;
+        if (opt_tab_parent_hwnd) {
+            wgs->extra_width = wgs->offset_width * 2;
+            wgs->extra_height = wgs->offset_height * 2;
+        } else {
+            wgs->extra_width =
+                wr.right - wr.left - cr.right + cr.left + wgs->offset_width*2;
+            wgs->extra_height =
+                wr.bottom - wr.top - cr.bottom + cr.top + wgs->offset_height*2;
+        }
 
         InvalidateRect(wgs->term_hwnd, NULL, true);
     }
@@ -2110,7 +2255,11 @@ static void exit_callback(void *vctx)
          * appropriate action. */
         if (close_on_exit == FORCE_ON ||
             (close_on_exit == AUTO && exitcode != INT_MAX)) {
-            PostQuitMessage(0);
+            if (opt_tab_parent_hwnd && wgs->term_hwnd && IsWindow(wgs->term_hwnd)) {
+                DestroyWindow(wgs->term_hwnd);
+            } else {
+                PostQuitMessage(0);
+            }
         } else {
             queue_toplevel_callback(close_session, wgs);
             wgs->session_closed = true;
@@ -2201,6 +2350,56 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
     int resize_action;
     WinGuiSeat *wgs = (WinGuiSeat *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
 
+    if (opt_tab_parent_hwnd) {
+        if (message == WM_NCCALCSIZE) {
+            /* Client area covers 100% of window - completely eliminates title bar and frame */
+            return 0;
+        }
+        if (message == WM_NCHITTEST) {
+            /* Entire area is client - prevents dragging by title bar or sizing borders */
+            return HTCLIENT;
+        }
+        if (message == WM_NCPAINT) {
+            /* Suppress any default non-client painting (caption, borders) */
+            return 0;
+        }
+        if (message == WM_NCACTIVATE) {
+            /* Prevent default non-client activation repainting */
+            return TRUE;
+        }
+        if (message == WM_SYSCOMMAND) {
+            UINT cmd = (UINT)(wParam & ~0xF);
+            if (cmd == SC_MOVE || cmd == SC_SIZE || cmd == SC_MAXIMIZE ||
+                cmd == SC_MINIMIZE || cmd == SC_RESTORE) {
+                return 0; /* Disable moving or resizing the embedded child tab */
+            }
+        }
+        if (message == WM_WINDOWPOSCHANGING) {
+            WINDOWPOS *wp = (WINDOWPOS *)lParam;
+            if (wp && !(wp->flags & SWP_NOMOVE)) {
+                /* Lock the child window position to (0, TAB_BAR_HEIGHT) inside the host window */
+                wp->x = 0;
+                wp->y = TAB_BAR_HEIGHT;
+            }
+        }
+    }
+
+    if (!wgs || !wgs->term) {
+        switch (message) {
+          case WM_SIZE:
+          case WM_PAINT:
+          case WM_SETFOCUS:
+          case WM_KILLFOCUS:
+          case WM_WINDOWPOSCHANGED:
+            return 0;
+          case WM_DESTROY:
+            show_mouseptr(wgs, true);
+            PostQuitMessage(0);
+            return 0;
+        }
+        return DefWindowProcW(hwnd, message, wParam, lParam);
+    }
+
     switch (message) {
       case WM_CREATE:
         break;
@@ -2214,18 +2413,29 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         msg = dupprintf("Are you sure you want to close this session?%s%s",
                         additional ? "\n" : "",
                         additional ? additional : "");
+        HWND owner = (opt_tab_parent_hwnd && IsWindow(opt_tab_parent_hwnd)) ?
+                     opt_tab_parent_hwnd : hwnd;
         if (wgs->session_closed ||
             !conf_get_bool(wgs->conf, CONF_warn_on_close) ||
-            MessageBox(hwnd, msg, title,
+            MessageBox(owner, msg, title,
                        MB_ICONWARNING | MB_OKCANCEL | MB_DEFBUTTON1)
-            == IDOK)
+            == IDOK) {
             DestroyWindow(hwnd);
+        } else {
+            if (opt_tab_parent_hwnd && IsWindow(opt_tab_parent_hwnd)) {
+                PostMessage(opt_tab_parent_hwnd, WM_APP_TAB_CANCEL_CLOSE, (WPARAM)hwnd, 0);
+            }
+        }
         sfree(title);
         sfree(msg);
         sfree(additional);
         return 0;
       }
       case WM_DESTROY:
+        if (opt_tab_parent_hwnd) {
+            PostMessage(opt_tab_parent_hwnd, WM_APP_TAB_CLOSE, (WPARAM)hwnd, 0);
+        }
+        g_term_hwnd = NULL;
         show_mouseptr(wgs, true);
         PostQuitMessage(0);
         return 0;
@@ -2308,20 +2518,39 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
 
                 strbuf_free(serbuf);
                 inherit_handles = true;
-                cl = dupprintf("putty %s&%p:%u", argprefix,
+                char tab_arg[64];
+                if (opt_tab_parent_hwnd) {
+                    snprintf(tab_arg, sizeof(tab_arg), " -tab-child 0x%llx ", (unsigned long long)(uintptr_t)opt_tab_parent_hwnd);
+                } else {
+                    tab_arg[0] = '\0';
+                }
+
+                cl = dupprintf("putty%s%s&%p:%u", tab_arg, argprefix,
                                filemap, (unsigned)size);
             } else if (wParam == IDM_SAVEDSESS) {
                 unsigned int sessno = ((lParam - IDM_SAVED_MIN)
                                        / MENU_SAVED_STEP) + 1;
                 if (sessno < (unsigned)sesslist.nsessions) {
                     const char *session = sesslist.sessions[sessno];
-                    cl = dupprintf("putty %s@%s", argprefix, session);
+                    char tab_arg[64];
+                    if (opt_tab_parent_hwnd) {
+                        snprintf(tab_arg, sizeof(tab_arg), " -tab-child 0x%llx ", (unsigned long long)(uintptr_t)opt_tab_parent_hwnd);
+                    } else {
+                        tab_arg[0] = '\0';
+                    }
+                    cl = dupprintf("putty%s%s@%s", tab_arg, argprefix, session);
                     inherit_handles = false;
                 } else
                     break;
             } else /* IDM_NEWSESS */ {
+                char tab_arg[64];
+                if (opt_tab_parent_hwnd) {
+                    snprintf(tab_arg, sizeof(tab_arg), " -tab-child 0x%llx ", (unsigned long long)(uintptr_t)opt_tab_parent_hwnd);
+                } else {
+                    tab_arg[0] = '\0';
+                }
                 cl = dupprintf("putty%s%s",
-                               *argprefix ? " " : "",
+                               *tab_arg ? tab_arg : (*argprefix ? " " : ""),
                                argprefix);
                 inherit_handles = false;
             }
@@ -2479,6 +2708,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                     nflg &= ~WS_MAXIMIZEBOX;
                 else
                     nflg |= WS_MAXIMIZEBOX;
+
+                if (opt_tab_parent_hwnd) {
+                    nflg &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME |
+                               WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU |
+                               WS_BORDER | WS_DLGFRAME);
+                    nflg |= (WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
+                    nexflag &= ~(WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE |
+                                 WS_EX_DLGMODALFRAME | WS_EX_STATICEDGE | WS_EX_APPWINDOW);
+                }
 
                 if (nflg != flag || nexflag != exflag) {
                     if (nflg != flag)
@@ -3038,7 +3276,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                              wgs->window_name : wgs->icon_name);
         if (wParam == SIZE_RESTORED || wParam == SIZE_MAXIMIZED)
             sw_SetWindowText(hwnd, wgs->window_name);
-        if (wParam == SIZE_RESTORED) {
+        if (wParam == SIZE_RESTORED && !opt_tab_parent_hwnd) {
             wgs->processed_resize = false;
             clear_full_screen(wgs);
             if (wgs->processed_resize) {
@@ -3051,7 +3289,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 return 0;
             }
         }
-        if (wParam == SIZE_MAXIMIZED && wgs->fullscr_on_max) {
+        if (wParam == SIZE_MAXIMIZED && wgs->fullscr_on_max && !opt_tab_parent_hwnd) {
             wgs->fullscr_on_max = false;
             wgs->processed_resize = false;
             make_full_screen(wgs);
@@ -3242,6 +3480,31 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
          * KEYDOWN, and call the Win32 translator functions so that
          * we get the translations under _our_ control.
          */
+        if (message == WM_KEYDOWN && opt_tab_parent_hwnd) {
+            bool ctrl = (GetKeyState(VK_CONTROL) < 0);
+            bool shift = (GetKeyState(VK_SHIFT) < 0);
+            if (ctrl) {
+                if (wParam == VK_TAB) {
+                    PostMessage(opt_tab_parent_hwnd, WM_COMMAND,
+                                shift ? IDM_TAB_PREV : IDM_TAB_NEXT, 0);
+                    return 0;
+                } else if (wParam == 'T') {
+                    PostMessage(opt_tab_parent_hwnd, WM_COMMAND, IDM_TAB_NEW, 0);
+                    return 0;
+                } else if (wParam == 'W') {
+                    PostMessage(opt_tab_parent_hwnd, WM_COMMAND, IDM_TAB_CLOSE, 0);
+                    return 0;
+                } else if (wParam == VK_F2 || (shift && wParam == 'R')) {
+                    PostMessage(opt_tab_parent_hwnd, WM_COMMAND, IDM_TAB_RENAME, 0);
+                    return 0;
+                } else if (wParam >= '1' && wParam <= '9') {
+                    PostMessage(opt_tab_parent_hwnd, WM_COMMAND,
+                                IDM_TAB_GOTO_BASE + (wParam - '1'), 0);
+                    return 0;
+                }
+            }
+        }
+
         {
             unsigned char buf[20];
             int len;
@@ -4833,6 +5096,9 @@ static void wintw_set_title(TermWin *tw, const char *title, int codepage)
     if (conf_get_bool(wgs->conf, CONF_win_name_always) ||
         !IsIconic(wgs->term_hwnd))
         sw_SetWindowText(wgs->term_hwnd, wgs->window_name);
+    if (opt_tab_parent_hwnd) {
+        PostMessage(opt_tab_parent_hwnd, WM_APP_TAB_TITLE, (WPARAM)wgs->term_hwnd, 0);
+    }
 }
 
 static void wintw_set_icon_title(TermWin *tw, const char *title, int codepage)
@@ -4848,6 +5114,9 @@ static void wintw_set_icon_title(TermWin *tw, const char *title, int codepage)
     if (!conf_get_bool(wgs->conf, CONF_win_name_always) &&
         IsIconic(wgs->term_hwnd))
         sw_SetWindowText(wgs->term_hwnd, wgs->icon_name);
+    if (opt_tab_parent_hwnd) {
+        PostMessage(opt_tab_parent_hwnd, WM_APP_TAB_TITLE, (WPARAM)wgs->term_hwnd, 0);
+    }
 }
 
 static void wintw_set_scrollbar(TermWin *tw, int total, int start, int page)
@@ -5737,6 +6006,8 @@ static void wintw_set_maximised(TermWin *tw, bool maximised)
  */
 static bool is_full_screen(WinGuiSeat *wgs)
 {
+    if (opt_tab_parent_hwnd)
+        return false;
     if (!IsZoomed(wgs->term_hwnd))
         return false;
     if (GetWindowLongPtr(wgs->term_hwnd, GWL_STYLE) & WS_CAPTION)
@@ -5811,6 +6082,9 @@ static void make_full_screen(WinGuiSeat *wgs)
     DWORD style;
     RECT ss;
 
+    if (opt_tab_parent_hwnd)
+        return;
+
     assert(IsZoomed(wgs->term_hwnd));
 
     if (is_full_screen(wgs))
@@ -5850,6 +6124,9 @@ static void clear_full_screen(WinGuiSeat *wgs)
 {
     DWORD oldstyle, style;
 
+    if (opt_tab_parent_hwnd)
+        return;
+
     /* Reinstate the window furniture. */
     style = oldstyle = GetWindowLongPtr(wgs->term_hwnd, GWL_STYLE);
     style |= WS_CAPTION | WS_BORDER;
@@ -5882,6 +6159,9 @@ static void clear_full_screen(WinGuiSeat *wgs)
  */
 static void flip_full_screen(WinGuiSeat *wgs)
 {
+    if (opt_tab_parent_hwnd)
+        return;
+
     if (is_full_screen(wgs)) {
         ShowWindow(wgs->term_hwnd, SW_RESTORE);
     } else if (IsZoomed(wgs->term_hwnd)) {

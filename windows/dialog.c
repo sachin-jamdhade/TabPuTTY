@@ -20,6 +20,7 @@
 #include <commctrl.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#include "wintabs.h"
 
 #ifdef MSVC4
 #define TVINSERTSTRUCT  TV_INSERTSTRUCT
@@ -208,6 +209,9 @@ static void pds_initdialog_finish(PortableDialogStuff *pds)
      * flicker.
      */
     ShowWindow(pds->dp->hwnd, SW_SHOWNORMAL);
+    SetWindowPos(pds->dp->hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    SetForegroundWindow(pds->dp->hwnd);
+    SetActiveWindow(pds->dp->hwnd);
 
     pds->initialised = true;
 }
@@ -526,6 +530,7 @@ static INT_PTR GenericMainDlgProc(HWND hwnd, UINT msg, WPARAM wParam,
     switch (msg) {
       case WM_INITDIALOG:
         pds_initdialog_start(pds, hwnd);
+        SetForegroundWindow(hwnd);
 
         pds_create_controls(pds, TREE_BASE, IDCX_STDBASE, 3, 3, 235, "");
 
@@ -768,8 +773,16 @@ bool do_config(Conf *conf)
 
     pds->dp->shortcuts['g'] = true;          /* the treeview: `Cate&gory' */
 
+    if (opt_tab_parent_hwnd && IsWindow(opt_tab_parent_hwnd)) {
+        SendMessage(opt_tab_parent_hwnd, WM_APP_TAB_CONFIG_OPEN, 0, (LPARAM)GetCurrentProcessId());
+    }
+
     ret = ShinyDialogBox(hinst, MAKEINTRESOURCE(IDD_MAINBOX), "PuTTYConfigBox",
                          NULL, GenericMainDlgProc, pds);
+
+    if (opt_tab_parent_hwnd && IsWindow(opt_tab_parent_hwnd)) {
+        SendMessage(opt_tab_parent_hwnd, WM_APP_TAB_CONFIG_CLOSE, 0, 0);
+    }
 
     pds_free(pds);
 
@@ -797,8 +810,16 @@ bool do_reconfig(HWND hwnd, Conf *conf, int protcfginfo)
 
     pds->dp->shortcuts['g'] = true;          /* the treeview: `Cate&gory' */
 
+    if (opt_tab_parent_hwnd && IsWindow(opt_tab_parent_hwnd)) {
+        SendMessage(opt_tab_parent_hwnd, WM_APP_TAB_CONFIG_OPEN, 0, (LPARAM)GetCurrentProcessId());
+    }
+
     ret = ShinyDialogBox(hinst, MAKEINTRESOURCE(IDD_MAINBOX), "PuTTYConfigBox",
                          NULL, GenericMainDlgProc, pds);
+
+    if (opt_tab_parent_hwnd && IsWindow(opt_tab_parent_hwnd)) {
+        SendMessage(opt_tab_parent_hwnd, WM_APP_TAB_CONFIG_CLOSE, 0, 0);
+    }
 
     pds_free(pds);
 

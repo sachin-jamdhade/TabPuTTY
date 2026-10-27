@@ -3,12 +3,15 @@
  */
 
 #include "putty.h"
+#include "wintabs.h"
 
 void centre_window(HWND win)
 {
     RECT rd, rw;
+    HWND hw = (opt_tab_parent_hwnd && IsWindow(opt_tab_parent_hwnd) && IsWindowVisible(opt_tab_parent_hwnd)) ?
+              opt_tab_parent_hwnd : GetDesktopWindow();
 
-    if (!GetWindowRect(GetDesktopWindow(), &rd))
+    if (!GetWindowRect(hw, &rd))
         return;
     if (!GetWindowRect(win, &rw))
         return;

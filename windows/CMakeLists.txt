@@ -63,7 +63,7 @@ add_sources_from_current_dir(otherbackends
 add_sources_from_current_dir(agent
   agent-client.c)
 add_sources_from_current_dir(guiterminal
-  dialog.c controls.c config.c printing.c jump-list.c sizetip.c)
+  dialog.c controls.c config.c printing.c jump-list.c sizetip.c wintabs.c)
 add_dependencies(guiterminal generated_licence_h) # dialog.c uses licence.h
 
 # This object awkwardly needs to live in the network library as well
@@ -206,3 +206,10 @@ target_link_libraries(test_terminal
   guiterminal settings eventloop utils ${platform_libraries})
 
 add_sources_from_current_dir(test_conf no-jump-list.c handle-wait.c)
+
+add_executable(test_wintabs
+  test_wintabs.c
+  wintabs.c)
+target_link_libraries(test_wintabs
+  utils ${platform_libraries})
+add_test(NAME WinTabsUnitTests COMMAND test_wintabs)

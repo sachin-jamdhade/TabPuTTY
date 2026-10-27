@@ -144,3 +144,17 @@ Makefile
 /windows/*.msi
 /windows/*.wixobj
 /windows/*.wixpdb
+/build/
+build/
+out/
+windows/test-reports/
+test-reports/
+*.xml
+*.dmp
+.vs/
+.vscode/
+.cache/
+compile_commands.json
+*.VC.db
+*.ipch
+

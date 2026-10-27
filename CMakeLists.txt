@@ -11,6 +11,13 @@ add_subdirectory(doc)
 
 add_compile_definitions(HAVE_CMAKE_H)
 
+option(TABPUTTY_ENABLE_TRACE "Enable TabPuTTY diagnostic trace logging" OFF)
+if(TABPUTTY_ENABLE_TRACE)
+  add_compile_definitions(TABPUTTY_TRACE=1)
+endif()
+
+enable_testing()
+
 include_directories(terminal)
 
 add_library(utils STATIC
