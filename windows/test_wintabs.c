@@ -392,6 +392,152 @@ static bool test_win32_plus_button_click_dispatch(char *err, size_t err_size)
 }
 
 /* ========================================================================= */
+/* Tab Color & Eye-Friendly Palette Tests                                    */
+/* ========================================================================= */
+
+/* Scenario 11: Tab Color Palette Properties & Eye-Friendliness */
+static bool test_palette_size_and_color_properties(char *err, size_t err_size)
+{
+    int count = tabhost_palette_count();
+    ASSERT_TRUE(count >= 16, "Palette contains at least 16 colors");
+
+    for (int i = 0; i < count; i++) {
+        const TabColorDef *c = tabhost_get_color(i);
+        ASSERT_TRUE(c != NULL, "Color definition pointer valid");
+        ASSERT_TRUE(c->name != NULL && strlen(c->name) > 0, "Color name is non-empty");
+
+        int r = GetRValue(c->bg);
+        int g = GetGValue(c->bg);
+        int b = GetBValue(c->bg);
+
+        /* Eye-friendly check: pastel backgrounds must be soft and soothing (high brightness >= 190) */
+        ASSERT_TRUE(r >= 190 && g >= 190 && b >= 190, "Background color is soft pastel (no harsh glare)");
+
+        /* High contrast text check: text must be dark charcoal */
+        int tr = GetRValue(c->text);
+        int tg = GetGValue(c->text);
+        int tb = GetBValue(c->text);
+        ASSERT_TRUE(tr <= 60 && tg <= 60 && tb <= 60, "Text color is dark charcoal for high contrast");
+    }
+
+    /* Out-of-bounds safety check */
+    const TabColorDef *oob_neg = tabhost_get_color(-1);
+    ASSERT_TRUE(oob_neg != NULL, "Negative index returns fallback color");
+    const TabColorDef *oob_pos = tabhost_get_color(count + 100);
+    ASSERT_TRUE(oob_pos != NULL, "Large index returns fallback color");
+
+    return true;
+}
+
+/* Scenario 12: Random Color Generation & Non-Consecutive Selection */
+static bool test_random_color_non_consecutive_repetition(char *err, size_t err_size)
+{
+    int count = tabhost_palette_count();
+    ASSERT_TRUE(count > 1, "Palette has multiple colors");
+
+    int hits[64] = {0};
+    int prev = -1;
+
+    for (int i = 0; i < 1000; i++) {
+        int pick = tabhost_pick_random_color(prev);
+        ASSERT_TRUE(pick >= 0 && pick < count, "Picked color is within palette range");
+        if (prev >= 0) {
+            ASSERT_TRUE(pick != prev, "Consecutive random picks never repeat previous color");
+        }
+        if (pick < 64) {
+            hits[pick]++;
+        }
+        prev = pick;
+    }
+
+    /* Verify all colors in the palette were hit across 1,000 runs */
+    for (int i = 0; i < count; i++) {
+        ASSERT_TRUE(hits[i] > 0, "Color index was selected in distribution");
+    }
+
+    return true;
+}
+
+/* Scenario 13: Tab Color Getter / Setter & Boundary Checks */
+static bool test_tab_color_getter_setter(char *err, size_t err_size)
+{
+    HINSTANCE inst = GetModuleHandle(NULL);
+    tabhost_init(inst);
+
+    HWND host = CreateWindowExA(
+        WS_EX_WINDOWEDGE,
+        PUTTY_TABHOST_CLASS,
+        "TestPuTTYHostColor",
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+        CW_USEDEFAULT, CW_USEDEFAULT,
+        800, 500,
+        NULL, NULL, inst, NULL);
+
+    ASSERT_TRUE(host != NULL, "Host window creation");
+
+    /* Initially 0 tabs registered */
+    ASSERT_EQ(tabhost_get_tab_color(host, 0), -1, "Zero tabs returns -1 for tab 0");
+    ASSERT_EQ(tabhost_get_tab_color(host, -1), -1, "Negative index returns -1");
+    ASSERT_EQ(tabhost_get_tab_color(NULL, 0), -1, "NULL host returns -1");
+
+    /* Create a dummy child window to register as a tab */
+    HWND child = CreateWindowExA(0, "STATIC", "ChildSession", WS_CHILD, 0, 0, 100, 100, host, NULL, inst, NULL);
+    ASSERT_TRUE(child != NULL, "Child window creation");
+
+    SendMessageA(host, WM_APP_TAB_REGISTER, (WPARAM)child, (LPARAM)GetCurrentProcessId());
+
+    int c0 = tabhost_get_tab_color(host, 0);
+    ASSERT_TRUE(c0 >= 0 && c0 < tabhost_palette_count(), "Initial tab gets valid random color index");
+
+    /* Set explicit color */
+    tabhost_set_tab_color(host, 0, 5);
+    ASSERT_EQ(tabhost_get_tab_color(host, 0), 5, "Color updated to index 5");
+
+    /* Invalid color index should be rejected */
+    tabhost_set_tab_color(host, 0, -1);
+    ASSERT_EQ(tabhost_get_tab_color(host, 0), 5, "Negative color index rejected");
+    tabhost_set_tab_color(host, 0, 999);
+    ASSERT_EQ(tabhost_get_tab_color(host, 0), 5, "Out of bounds color index rejected");
+
+    DestroyWindow(host);
+    return true;
+}
+
+/* Scenario 14: Tab Color Menu Commands Dispatch */
+static bool test_tab_color_menu_commands(char *err, size_t err_size)
+{
+    HINSTANCE inst = GetModuleHandle(NULL);
+    tabhost_init(inst);
+
+    HWND host = CreateWindowExA(
+        WS_EX_WINDOWEDGE,
+        PUTTY_TABHOST_CLASS,
+        "TestPuTTYHostMenuColor",
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+        CW_USEDEFAULT, CW_USEDEFAULT,
+        800, 500,
+        NULL, NULL, inst, NULL);
+
+    ASSERT_TRUE(host != NULL, "Host window creation");
+
+    HWND child = CreateWindowExA(0, "STATIC", "ChildSession2", WS_CHILD, 0, 0, 100, 100, host, NULL, inst, NULL);
+    SendMessageA(host, WM_APP_TAB_REGISTER, (WPARAM)child, (LPARAM)GetCurrentProcessId());
+
+    /* Dispatch IDM_TAB_COLOR_BASE + 7 */
+    SendMessageA(host, WM_COMMAND, MAKEWPARAM(IDM_TAB_COLOR_BASE + 7, 0), 0);
+    ASSERT_EQ(tabhost_get_tab_color(host, 0), 7, "Menu command set color to 7");
+
+    /* Dispatch IDM_TAB_COLOR_RANDOM */
+    SendMessageA(host, WM_COMMAND, MAKEWPARAM(IDM_TAB_COLOR_RANDOM, 0), 0);
+    int new_col = tabhost_get_tab_color(host, 0);
+    ASSERT_TRUE(new_col >= 0 && new_col < tabhost_palette_count(), "Randomized color is in valid range");
+    ASSERT_TRUE(new_col != 7, "Randomize changed color away from 7");
+
+    DestroyWindow(host);
+    return true;
+}
+
+/* ========================================================================= */
 /* JUnit XML Generation                                                      */
 /* ========================================================================= */
 
@@ -474,6 +620,18 @@ int main(void)
 
     /* Scenario 10: Win32 Command Dispatch */
     RUN_TEST(test_win32_plus_button_click_dispatch);
+
+    /* Scenario 11: Eye-Friendly Tab Color Palette Properties */
+    RUN_TEST(test_palette_size_and_color_properties);
+
+    /* Scenario 12: Random Color Distribution & Non-Consecutive Repetition */
+    RUN_TEST(test_random_color_non_consecutive_repetition);
+
+    /* Scenario 13: Tab Color Getter / Setter & Boundary Checks */
+    RUN_TEST(test_tab_color_getter_setter);
+
+    /* Scenario 14: Tab Color Menu Commands Dispatch */
+    RUN_TEST(test_tab_color_menu_commands);
 
     QueryPerformanceCounter(&end);
     double total_sec = (double)(end.QuadPart - start.QuadPart) / (double)freq.QuadPart;

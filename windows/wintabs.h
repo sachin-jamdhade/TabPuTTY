@@ -37,7 +37,20 @@ extern "C" {
 #define IDM_TAB_NEXT          0x9103
 #define IDM_TAB_PREV          0x9104
 #define IDM_TAB_RENAME        0x9105
+#define IDM_TAB_COLOR_RANDOM  0x9120
+#define IDM_TAB_COLOR_BASE    0x9130  /* 0x9130 .. 0x914F for palette colors */
 #define IDM_TAB_GOTO_BASE     0x9110  /* 0x9110 .. 0x9119 for tabs 1-9 */
+
+/*
+ * Eye-Friendly Tab Color Definition & Palette
+ */
+typedef struct TabColorDef {
+    COLORREF bg;            /* Soft pastel background */
+    COLORREF accent;        /* Slightly deeper accent tone for top bar/border */
+    COLORREF inactive_bg;   /* Subtle muted tone for inactive state */
+    COLORREF text;          /* High contrast text color (near-black/charcoal) */
+    const char *name;       /* Descriptive color name */
+} TabColorDef;
 
 /*
  * Tab Host Window Class & Layout
@@ -56,7 +69,7 @@ extern bool opt_tabbed_mode;        /* True if tabbed host is enabled (default) 
 extern HWND opt_tab_parent_hwnd;    /* Non-NULL if running as embedded child tab */
 
 /*
- * Tab Host Lifecycle Functions
+ * Tab Host Lifecycle & Palette Functions
  */
 int tabhost_init(HINSTANCE inst);
 HWND tabhost_create_window(HINSTANCE inst, int show, const char *cmdline);
@@ -68,6 +81,12 @@ void tabhost_rename_tab(HWND host_wnd, int tab_index);
 HWND tabhost_get_plus_btn(HWND host_wnd);
 void tabhost_calc_plus_btn_pos(int num_tabs, int last_tab_right, int client_w,
                               int *out_x, int *out_y, bool *out_visible, bool *out_enabled);
+
+int tabhost_palette_count(void);
+const TabColorDef *tabhost_get_color(int color_index);
+int tabhost_pick_random_color(int last_color_index);
+int tabhost_get_tab_color(HWND host_wnd, int tab_index);
+void tabhost_set_tab_color(HWND host_wnd, int tab_index, int color_index);
 
 #ifdef __cplusplus
 }

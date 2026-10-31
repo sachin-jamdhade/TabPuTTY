@@ -40,7 +40,17 @@ Each terminal session runs with full process isolation inside an embedded tab un
 - **Overflow & Clamping Protection**: If tabs exceed the window width, the button automatically clamps inside the visible client boundary. On extremely narrow windows (<26px), it hides cleanly.
 - **Tab Limit Guard**: Automatically disables when the maximum tab limit (`MAX_TABS - 1`) is reached.
 
-### 5. Keyboard Shortcuts & Navigation
+### 5. Eye-Friendly Randomized Tab Colors & Palette Selection
+- **Randomized Color on Creation**: Each new tab created is automatically assigned a unique, random color chosen from a hand-crafted palette.
+- **Consecutive Duplicate Prevention**: Built-in anti-collision logic ensures adjacent tabs never receive the exact same color.
+- **Eye-Friendly Calming Palette**: Specially tuned 16-color pastel/muted design system (Sage Mint, Dusty Sky, Soft Lavender, Muted Peach, Honey Cream, Seafoam Teal, Blush Rose, Periwinkle, Olive Moss, Warm Sand, Powder Slate, Muted Mauve, Soft Apricot, Ice Blue, Meadow Green, and Dusty Heather) designed to minimize eye fatigue during extended terminal work.
+- **Active vs. Inactive Contrast**:
+  - **Active Tab**: Features a rich pastel background fill, a 3px top accent stripe matching the hue, and seamless connection with the terminal area.
+  - **Inactive Tabs**: Rendered in soft muted tints with a 2px top accent bar and subtle dividers.
+  - **Text Readability**: Ultra-crisp charcoal text (`#1C241F`, `#18222E`, etc.) exceeding WCAG AAA standards (>7:1 contrast ratio).
+- **Interactive Palette Selection**: Right-click any tab to open the context menu and choose **"Tab Color"** to randomize the color or manually select any palette color with live checkmark tracking.
+
+### 6. Keyboard Shortcuts & Navigation
 | Shortcut | Action |
 | :--- | :--- |
 | `Ctrl + T` | Open new tab |

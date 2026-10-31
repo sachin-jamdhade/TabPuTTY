@@ -12,7 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include <time.h>
 
 #include "wintabs.h"
 
@@ -25,6 +25,80 @@
 bool opt_tabbed_mode = true;
 HWND opt_tab_parent_hwnd = NULL;
 
+/*
+ * Curated Eye-Friendly Palette: 16 soft, soothing pastel/muted colors
+ * with matching accent strip tones and high-contrast charcoal text.
+ */
+static const TabColorDef TAB_PALETTE[] = {
+    /* 0: Soft Sage Mint */
+    { RGB(218, 242, 227), RGB(60, 148, 96), RGB(238, 248, 242), RGB(28, 36, 31), "Sage Mint" },
+    /* 1: Dusty Sky Blue */
+    { RGB(218, 236, 252), RGB(58, 126, 188), RGB(238, 245, 253), RGB(24, 34, 46), "Dusty Sky" },
+    /* 2: Soft Lavender */
+    { RGB(235, 228, 250), RGB(126, 102, 194), RGB(246, 243, 253), RGB(36, 28, 48), "Soft Lavender" },
+    /* 3: Muted Peach */
+    { RGB(254, 230, 222), RGB(210, 106, 82), RGB(255, 244, 240), RGB(46, 30, 26), "Muted Peach" },
+    /* 4: Warm Honey Cream */
+    { RGB(254, 244, 214), RGB(196, 154, 42), RGB(255, 250, 236), RGB(44, 38, 22), "Honey Cream" },
+    /* 5: Seafoam Teal */
+    { RGB(216, 244, 240), RGB(46, 154, 138), RGB(236, 249, 247), RGB(22, 38, 36), "Seafoam Teal" },
+    /* 6: Soft Blush Rose */
+    { RGB(252, 228, 236), RGB(202, 92, 128), RGB(254, 243, 246), RGB(46, 26, 34), "Blush Rose" },
+    /* 7: Gentle Periwinkle */
+    { RGB(226, 232, 255), RGB(94, 118, 214), RGB(242, 245, 255), RGB(26, 30, 48), "Periwinkle" },
+    /* 8: Muted Olive Moss */
+    { RGB(230, 240, 218), RGB(112, 150, 70), RGB(244, 248, 238), RGB(32, 38, 24), "Olive Moss" },
+    /* 9: Warm Sand Biscuit */
+    { RGB(247, 237, 225), RGB(174, 132, 88), RGB(252, 247, 241), RGB(44, 36, 28), "Warm Sand" },
+    /* 10: Powder Slate */
+    { RGB(222, 238, 242), RGB(76, 136, 153), RGB(240, 248, 250), RGB(24, 36, 40), "Powder Slate" },
+    /* 11: Muted Mauve */
+    { RGB(242, 227, 239), RGB(156, 94, 146), RGB(250, 242, 248), RGB(42, 26, 40), "Muted Mauve" },
+    /* 12: Soft Apricot */
+    { RGB(255, 235, 218), RGB(214, 128, 64), RGB(255, 246, 238), RGB(46, 32, 22), "Soft Apricot" },
+    /* 13: Muted Ice Blue */
+    { RGB(220, 242, 248), RGB(58, 144, 170), RGB(239, 249, 252), RGB(22, 36, 42), "Ice Blue" },
+    /* 14: Soft Meadow Green */
+    { RGB(224, 244, 226), RGB(78, 158, 88), RGB(241, 250, 242), RGB(26, 38, 28), "Meadow Green" },
+    /* 15: Dusty Heather */
+    { RGB(238, 230, 244), RGB(140, 108, 156), RGB(248, 244, 251), RGB(38, 28, 44), "Dusty Heather" },
+};
+#define TAB_PALETTE_SIZE (sizeof(TAB_PALETTE) / sizeof(TAB_PALETTE[0]))
+
+int tabhost_palette_count(void) {
+  return (int)TAB_PALETTE_SIZE;
+}
+
+const TabColorDef *tabhost_get_color(int color_index) {
+  if (color_index < 0 || color_index >= (int)TAB_PALETTE_SIZE) {
+    return &TAB_PALETTE[0];
+  }
+  return &TAB_PALETTE[color_index];
+}
+
+static bool s_rand_initialized = false;
+static void tabhost_ensure_rand(void) {
+  if (!s_rand_initialized) {
+    srand((unsigned int)time(NULL) ^ (unsigned int)GetCurrentProcessId());
+    s_rand_initialized = true;
+  }
+}
+
+int tabhost_pick_random_color(int last_color_index) {
+  tabhost_ensure_rand();
+  if (TAB_PALETTE_SIZE <= 1)
+    return 0;
+
+  int pick;
+  int attempts = 0;
+  do {
+    pick = rand() % TAB_PALETTE_SIZE;
+    attempts++;
+  } while (pick == last_color_index && attempts < 50);
+
+  return pick;
+}
+
 typedef struct TabEntry {
   HWND child_hwnd;
   DWORD pid;
@@ -32,6 +106,7 @@ typedef struct TabEntry {
   char title[256];
   bool close_requested;
   bool user_renamed;
+  int color_index;
 } TabEntry;
 
 static HANDLE tabhost_job = NULL;
@@ -140,6 +215,109 @@ static int tabhost_get_dpi(HWND hwnd) {
   return 96;
 }
 
+int tabhost_get_tab_color(HWND host_wnd, int tab_index) {
+  TabHostState *state = tabhost_get_state(host_wnd);
+  if (!state || tab_index < 0 || tab_index >= state->num_tabs)
+    return -1;
+  return state->tabs[tab_index].color_index;
+}
+
+void tabhost_set_tab_color(HWND host_wnd, int tab_index, int color_index) {
+  TabHostState *state = tabhost_get_state(host_wnd);
+  if (!state || tab_index < 0 || tab_index >= state->num_tabs)
+    return;
+  if (color_index < 0 || color_index >= (int)TAB_PALETTE_SIZE)
+    return;
+
+  state->tabs[tab_index].color_index = color_index;
+  if (state->tab_ctrl && IsWindow(state->tab_ctrl)) {
+    InvalidateRect(state->tab_ctrl, NULL, TRUE);
+  }
+}
+
+static void tabhost_draw_tab_item(TabHostState *state, DRAWITEMSTRUCT *dis) {
+  if (!state || dis->itemID >= (UINT)state->num_tabs)
+    return;
+
+  int idx = (int)dis->itemID;
+  bool is_selected =
+      (dis->itemState & ODS_SELECTED) != 0 || (idx == state->active_tab);
+  int cidx = state->tabs[idx].color_index;
+  const TabColorDef *col = tabhost_get_color(cidx);
+
+  HDC hdc = dis->hDC;
+  RECT rc = dis->rcItem;
+  int dpi = tabhost_get_dpi(state->hwnd);
+
+  COLORREF bg_color = is_selected ? col->bg : col->inactive_bg;
+  HBRUSH hbr_bg = CreateSolidBrush(bg_color);
+  HBRUSH hbr_accent = CreateSolidBrush(col->accent);
+
+  /* Fill tab background */
+  FillRect(hdc, &rc, hbr_bg);
+
+  /* Top accent stripe: 3px for selected, 2px for inactive */
+  int accent_h = MulDiv(is_selected ? 3 : 2, dpi, 96);
+  if (accent_h < 2)
+    accent_h = 2;
+  RECT rc_accent = rc;
+  rc_accent.bottom = rc.top + accent_h;
+  FillRect(hdc, &rc_accent, hbr_accent);
+
+  /* Tab borders */
+  COLORREF border_color = is_selected ? col->accent : RGB(205, 212, 220);
+  HPEN pen_border = CreatePen(PS_SOLID, 1, border_color);
+  HPEN old_pen = (HPEN)SelectObject(hdc, pen_border);
+
+  MoveToEx(hdc, rc.left, rc.top + accent_h, NULL);
+  LineTo(hdc, rc.left, rc.bottom);
+
+  MoveToEx(hdc, rc.right - 1, rc.top + accent_h, NULL);
+  LineTo(hdc, rc.right - 1, rc.bottom);
+
+  if (!is_selected) {
+    /* Bottom divider for inactive tab */
+    HPEN pen_bottom = CreatePen(PS_SOLID, 1, RGB(185, 195, 205));
+    SelectObject(hdc, pen_bottom);
+    MoveToEx(hdc, rc.left, rc.bottom - 1, NULL);
+    LineTo(hdc, rc.right, rc.bottom - 1);
+    SelectObject(hdc, pen_border);
+    DeleteObject(pen_bottom);
+  } else {
+    /* Flush bottom for active tab */
+    HPEN pen_flush = CreatePen(PS_SOLID, 1, bg_color);
+    SelectObject(hdc, pen_flush);
+    MoveToEx(hdc, rc.left + 1, rc.bottom - 1, NULL);
+    LineTo(hdc, rc.right - 1, rc.bottom - 1);
+    SelectObject(hdc, pen_border);
+    DeleteObject(pen_flush);
+  }
+
+  SelectObject(hdc, old_pen);
+  DeleteObject(pen_border);
+  DeleteObject(hbr_bg);
+  DeleteObject(hbr_accent);
+
+  /* Draw tab text */
+  HFONT hFont =
+      state->hfont ? state->hfont : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+  HFONT old_font = (HFONT)SelectObject(hdc, hFont);
+  SetBkMode(hdc, TRANSPARENT);
+  SetTextColor(hdc, col->text);
+
+  RECT rc_text = rc;
+  int pad_h = MulDiv(8, dpi, 96);
+  rc_text.left += pad_h;
+  rc_text.right -= pad_h;
+  rc_text.top += is_selected ? accent_h : (accent_h - 1);
+
+  DrawTextA(hdc, state->tabs[idx].title, -1, &rc_text,
+            DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS |
+                DT_NOPREFIX);
+
+  SelectObject(hdc, old_font);
+}
+
 static void tabhost_update_layout(TabHostState *state) {
   RECT rc;
   if (!state || !state->hwnd || !state->tab_ctrl)
@@ -160,6 +338,7 @@ static void tabhost_update_layout(TabHostState *state) {
 
   /* Position Tab Control across the top */
   MoveWindow(state->tab_ctrl, 0, 0, client_w, bar_height, TRUE);
+  TabCtrl_SetItemSize(state->tab_ctrl, 0, bar_height - 2);
 
   /* Reposition and update compact plus button */
   if (state->plus_btn && IsWindow(state->plus_btn)) {
@@ -241,6 +420,7 @@ static void tabhost_switch_tab(TabHostState *state, int new_idx) {
 
   state->active_tab = new_idx;
   TabCtrl_SetCurSel(state->tab_ctrl, new_idx);
+  InvalidateRect(state->tab_ctrl, NULL, TRUE);
 
   /* Show new active child */
   HWND child = state->tabs[new_idx].child_hwnd;
@@ -345,14 +525,20 @@ static void tabhost_register_child(TabHostState *state, HWND child_hwnd,
   state->tabs[idx].pid = pid;
   state->tabs[idx].close_requested = false;
   state->tabs[idx].user_renamed = false;
-  state->tabs[idx].hProcess = OpenProcess(
-      SYNCHRONIZE | PROCESS_QUERY_INFORMATION | PROCESS_TERMINATE, FALSE, pid);
-  if (!state->tabs[idx].hProcess) {
+  int last_color = (idx > 0) ? state->tabs[idx - 1].color_index : -1;
+  state->tabs[idx].color_index = tabhost_pick_random_color(last_color);
+  if (pid != 0 && pid != GetCurrentProcessId()) {
     state->tabs[idx].hProcess = OpenProcess(
-        SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-  }
-  if (tabhost_job && state->tabs[idx].hProcess) {
-    AssignProcessToJobObject(tabhost_job, state->tabs[idx].hProcess);
+        SYNCHRONIZE | PROCESS_QUERY_INFORMATION | PROCESS_TERMINATE, FALSE, pid);
+    if (!state->tabs[idx].hProcess) {
+      state->tabs[idx].hProcess = OpenProcess(
+          SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    }
+    if (tabhost_job && state->tabs[idx].hProcess) {
+      AssignProcessToJobObject(tabhost_job, state->tabs[idx].hProcess);
+    }
+  } else {
+    state->tabs[idx].hProcess = NULL;
   }
 
   char raw_title[256];
@@ -527,6 +713,24 @@ static void tabhost_show_context_menu(TabHostState *state, int x, int y) {
   AppendMenuA(hMenu, MF_STRING, IDM_TAB_NEW, "Ne&w Tab\tCtrl+T");
   AppendMenuA(hMenu, MF_STRING, IDM_TAB_DUP, "&Duplicate Tab\tCtrl+Shift+D");
   AppendMenuA(hMenu, MF_STRING, IDM_TAB_RENAME, "Re&name Tab...\tCtrl+F2");
+
+  /* Tab Color selection submenu */
+  HMENU hColorMenu = CreatePopupMenu();
+  AppendMenuA(hColorMenu, MF_STRING, IDM_TAB_COLOR_RANDOM, "&Randomize Color");
+  AppendMenuA(hColorMenu, MF_SEPARATOR, 0, NULL);
+  int cur_color =
+      (state && state->active_tab >= 0 && state->active_tab < state->num_tabs)
+          ? state->tabs[state->active_tab].color_index
+          : -1;
+  for (int c = 0; c < tabhost_palette_count(); c++) {
+    const TabColorDef *cd = tabhost_get_color(c);
+    UINT flags = MF_STRING;
+    if (c == cur_color)
+      flags |= MF_CHECKED;
+    AppendMenuA(hColorMenu, flags, IDM_TAB_COLOR_BASE + c, cd->name);
+  }
+  AppendMenuA(hMenu, MF_POPUP, (UINT_PTR)hColorMenu, "Tab &Color");
+
   AppendMenuA(hMenu, MF_SEPARATOR, 0, NULL);
   AppendMenuA(hMenu, MF_STRING, IDM_TAB_NEXT, "Ne&xt Tab\tCtrl+Tab");
   AppendMenuA(hMenu, MF_STRING, IDM_TAB_PREV, "&Previous Tab\tCtrl+Shift+Tab");
@@ -759,12 +963,26 @@ static LRESULT CALLBACK TabHostWndProc(HWND hwnd, UINT msg, WPARAM wParam,
     icex.dwICC = ICC_TAB_CLASSES;
     InitCommonControlsEx(&icex);
 
-    /* Create Tab Control */
+    /* Create Tab Control with TCS_OWNERDRAWFIXED */
     state->tab_ctrl = CreateWindowExA(0, WC_TABCONTROLA, "",
                                       WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS |
-                                          TCS_FOCUSNEVER | TCS_TOOLTIPS,
+                                          TCS_FOCUSNEVER | TCS_TOOLTIPS |
+                                          TCS_OWNERDRAWFIXED,
                                       0, 0, 100, TAB_BAR_HEIGHT, hwnd,
                                       (HMENU)100, GetModuleHandle(NULL), NULL);
+
+    /* Turn off visual style theming so owner-draw tab colors render cleanly */
+    typedef HRESULT(WINAPI * SetWindowTheme_fn)(HWND, LPCWSTR, LPCWSTR);
+    HMODULE uxtheme = GetModuleHandleA("uxtheme.dll");
+    if (!uxtheme)
+      uxtheme = LoadLibraryA("uxtheme.dll");
+    if (uxtheme) {
+      SetWindowTheme_fn pSetWindowTheme =
+          (SetWindowTheme_fn)GetProcAddress(uxtheme, "SetWindowTheme");
+      if (pSetWindowTheme) {
+        pSetWindowTheme(state->tab_ctrl, L"", L"");
+      }
+    }
 
     /* Set clean UI font for tab bar */
     NONCLIENTMETRICSA ncm;
@@ -879,6 +1097,16 @@ static LRESULT CALLBACK TabHostWndProc(HWND hwnd, UINT msg, WPARAM wParam,
     }
     return 0;
 
+  case WM_DRAWITEM: {
+    DRAWITEMSTRUCT *dis = (DRAWITEMSTRUCT *)lParam;
+    if (dis && dis->CtlType == ODT_TAB && state &&
+        dis->hwndItem == state->tab_ctrl) {
+      tabhost_draw_tab_item(state, dis);
+      return TRUE;
+    }
+    break;
+  }
+
   case WM_NOTIFY: {
     NMHDR *pnm = (NMHDR *)lParam;
     if (state && pnm->hwndFrom == state->tab_ctrl) {
@@ -958,7 +1186,30 @@ static LRESULT CALLBACK TabHostWndProc(HWND hwnd, UINT msg, WPARAM wParam,
         tabhost_switch_tab(state, (state->active_tab - 1 + state->num_tabs) %
                                       state->num_tabs);
       return 0;
+    case IDM_TAB_COLOR_RANDOM:
+      if (state && state->active_tab >= 0 &&
+          state->active_tab < state->num_tabs) {
+        int cur = state->tabs[state->active_tab].color_index;
+        state->tabs[state->active_tab].color_index =
+            tabhost_pick_random_color(cur);
+        if (state->tab_ctrl && IsWindow(state->tab_ctrl)) {
+          InvalidateRect(state->tab_ctrl, NULL, TRUE);
+        }
+      }
+      return 0;
     default:
+      if (LOWORD(wParam) >= IDM_TAB_COLOR_BASE &&
+          LOWORD(wParam) < IDM_TAB_COLOR_BASE + tabhost_palette_count()) {
+        int target_col = LOWORD(wParam) - IDM_TAB_COLOR_BASE;
+        if (state && state->active_tab >= 0 &&
+            state->active_tab < state->num_tabs) {
+          state->tabs[state->active_tab].color_index = target_col;
+          if (state->tab_ctrl && IsWindow(state->tab_ctrl)) {
+            InvalidateRect(state->tab_ctrl, NULL, TRUE);
+          }
+        }
+        return 0;
+      }
       if (LOWORD(wParam) >= IDM_TAB_GOTO_BASE &&
           LOWORD(wParam) < IDM_TAB_GOTO_BASE + 9) {
         int target = LOWORD(wParam) - IDM_TAB_GOTO_BASE;
@@ -1068,7 +1319,7 @@ static LRESULT CALLBACK TabHostWndProc(HWND hwnd, UINT msg, WPARAM wParam,
           SetParent(state->tabs[i].child_hwnd, NULL);
           PostMessage(state->tabs[i].child_hwnd, WM_CLOSE, 0, 0);
         }
-        if (state->tabs[i].hProcess) {
+        if (state->tabs[i].hProcess && state->tabs[i].pid != GetCurrentProcessId()) {
           TerminateProcess(state->tabs[i].hProcess, 0);
           CloseHandle(state->tabs[i].hProcess);
         }

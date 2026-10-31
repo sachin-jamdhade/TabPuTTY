@@ -910,8 +910,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
 
     gui_terminal_ready(wgs->term_hwnd, &wgs->seat, wgs->backend);
 
-    start_backend();
-
     while (1) {
         int n;
         DWORD timeout;
