@@ -158,3 +158,32 @@ compile_commands.json
 *.VC.db
 *.ipch
 
+# Build directories and outputs
+build*/
+out*/
+scratch/
+
+# Accidental artifacts & scratch outputs
+\$null
+test.c
+test_out.txt
+
+# Binaries, libraries, and debug symbols (repository-wide)
+*.exe
+*.obj
+*.pdb
+*.ilk
+*.lib
+*.a
+*.res
+*.RES
+*.pch
+*.rsp
+*.map
+
+# CMake build files (repository-wide)
+CMakeCache.txt
+CTestTestfile.cmake
+cmake_install.cmake
+CMakeFiles/
+
