@@ -323,7 +323,7 @@ static bool test_win32_window_and_button_creation(char *err, size_t err_size)
     tabhost_init(inst);
 
     HWND host = CreateWindowExA(
-        WS_EX_WINDOWEDGE,
+        WS_EX_APPWINDOW,
         PUTTY_TABHOST_CLASS,
         "TestPuTTYHost",
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
@@ -370,7 +370,7 @@ static bool test_win32_plus_button_click_dispatch(char *err, size_t err_size)
     tabhost_init(inst);
 
     HWND host = CreateWindowExA(
-        WS_EX_WINDOWEDGE,
+        WS_EX_APPWINDOW,
         PUTTY_TABHOST_CLASS,
         "TestPuTTYHostClick",
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
@@ -465,7 +465,7 @@ static bool test_tab_color_getter_setter(char *err, size_t err_size)
     tabhost_init(inst);
 
     HWND host = CreateWindowExA(
-        WS_EX_WINDOWEDGE,
+        WS_EX_APPWINDOW,
         PUTTY_TABHOST_CLASS,
         "TestPuTTYHostColor",
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
@@ -510,7 +510,7 @@ static bool test_tab_color_menu_commands(char *err, size_t err_size)
     tabhost_init(inst);
 
     HWND host = CreateWindowExA(
-        WS_EX_WINDOWEDGE,
+        WS_EX_APPWINDOW,
         PUTTY_TABHOST_CLASS,
         "TestPuTTYHostMenuColor",
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,

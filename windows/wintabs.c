@@ -137,6 +137,9 @@ typedef struct TabHostState {
   bool initial_session_launched;
   HANDLE pending_procs[MAX_TABS];
   int num_pending;
+  int hover_tab;
+  bool plus_hover;
+  bool plus_pressed;
 } TabHostState;
 
 static void tabhost_clean_title(const char *raw, char *clean, size_t max_len) {
@@ -253,10 +256,10 @@ static void tabhost_draw_tab_item(TabHostState *state, DRAWITEMSTRUCT *dis) {
   HBRUSH hbr_bg = CreateSolidBrush(bg_color);
   HBRUSH hbr_accent = CreateSolidBrush(col->accent);
 
-  /* Fill tab background */
+  /* Flat tab background */
   FillRect(hdc, &rc, hbr_bg);
 
-  /* Top accent stripe: 3px for selected, 2px for inactive */
+  /* Top accent stripe: flat 3px for selected, 2px for inactive */
   int accent_h = MulDiv(is_selected ? 3 : 2, dpi, 96);
   if (accent_h < 2)
     accent_h = 2;
@@ -264,25 +267,27 @@ static void tabhost_draw_tab_item(TabHostState *state, DRAWITEMSTRUCT *dis) {
   rc_accent.bottom = rc.top + accent_h;
   FillRect(hdc, &rc_accent, hbr_accent);
 
-  /* Tab borders */
-  COLORREF border_color = is_selected ? col->accent : RGB(205, 212, 220);
+  /* Clean flat borders with well-defined outline (no 3D shadows/bevels) */
+  COLORREF border_color = is_selected ? col->accent : RGB(175, 185, 198);
   HPEN pen_border = CreatePen(PS_SOLID, 1, border_color);
   HPEN old_pen = (HPEN)SelectObject(hdc, pen_border);
 
-  MoveToEx(hdc, rc.left, rc.top + accent_h, NULL);
+  /* Left border */
+  MoveToEx(hdc, rc.left, rc.top, NULL);
   LineTo(hdc, rc.left, rc.bottom);
 
-  MoveToEx(hdc, rc.right - 1, rc.top + accent_h, NULL);
+  /* Top border */
+  MoveToEx(hdc, rc.left, rc.top, NULL);
+  LineTo(hdc, rc.right - 1, rc.top);
+
+  /* Right border */
+  MoveToEx(hdc, rc.right - 1, rc.top, NULL);
   LineTo(hdc, rc.right - 1, rc.bottom);
 
   if (!is_selected) {
     /* Bottom divider for inactive tab */
-    HPEN pen_bottom = CreatePen(PS_SOLID, 1, RGB(185, 195, 205));
-    SelectObject(hdc, pen_bottom);
     MoveToEx(hdc, rc.left, rc.bottom - 1, NULL);
     LineTo(hdc, rc.right, rc.bottom - 1);
-    SelectObject(hdc, pen_border);
-    DeleteObject(pen_bottom);
   } else {
     /* Flush bottom for active tab */
     HPEN pen_flush = CreatePen(PS_SOLID, 1, bg_color);
@@ -316,6 +321,298 @@ static void tabhost_draw_tab_item(TabHostState *state, DRAWITEMSTRUCT *dis) {
                 DT_NOPREFIX);
 
   SelectObject(hdc, old_font);
+}
+
+/*
+ * Custom double-buffered flat tab bar painting for WC_TABCONTROL subclass
+ */
+static void tabhost_paint_flat_tab_bar(TabHostState *state, HWND hwnd) {
+  PAINTSTRUCT ps;
+  HDC hdc = BeginPaint(hwnd, &ps);
+  if (!hdc || !state) {
+    if (hdc)
+      EndPaint(hwnd, &ps);
+    return;
+  }
+
+  RECT rc_client;
+  GetClientRect(hwnd, &rc_client);
+  int client_w = rc_client.right - rc_client.left;
+  int client_h = rc_client.bottom - rc_client.top;
+  if (client_w <= 0 || client_h <= 0) {
+    EndPaint(hwnd, &ps);
+    return;
+  }
+
+  int dpi = tabhost_get_dpi(state->hwnd);
+
+  /* Double-buffer DC to eliminate all flicker */
+  HDC mem_dc = CreateCompatibleDC(hdc);
+  HBITMAP mem_bm = CreateCompatibleBitmap(hdc, client_w, client_h);
+  HBITMAP old_bm = (HBITMAP)SelectObject(mem_dc, mem_bm);
+
+  /* 1. Flat tab bar background */
+  COLORREF bar_bg = RGB(236, 239, 243);
+  HBRUSH hbr_bar = CreateSolidBrush(bar_bg);
+  FillRect(mem_dc, &rc_client, hbr_bar);
+  DeleteObject(hbr_bar);
+
+  /* 2. Flat baseline outline separating tab bar from the window content */
+  COLORREF baseline_col = RGB(175, 185, 198);
+  HPEN pen_base = CreatePen(PS_SOLID, 1, baseline_col);
+  HPEN old_pen = (HPEN)SelectObject(mem_dc, pen_base);
+  MoveToEx(mem_dc, 0, client_h - 1, NULL);
+  LineTo(mem_dc, client_w, client_h - 1);
+
+  HFONT hFont = state->hfont ? state->hfont : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+  HFONT old_font = (HFONT)SelectObject(mem_dc, hFont);
+  SetBkMode(mem_dc, TRANSPARENT);
+
+  int count = state->num_tabs;
+  int active_tab = state->active_tab;
+
+  /* Draw tabs in two passes: inactive tabs first, then active tab on top */
+  for (int pass = 0; pass < 2; pass++) {
+    for (int i = 0; i < count; i++) {
+      bool is_selected = (i == active_tab);
+      if ((pass == 0 && is_selected) || (pass == 1 && !is_selected))
+        continue;
+
+      RECT rc_item = {0};
+      if (!TabCtrl_GetItemRect(hwnd, i, &rc_item))
+        continue;
+
+      RECT rc_tab = rc_item;
+      rc_tab.top = is_selected ? 1 : MulDiv(3, dpi, 96);
+      rc_tab.bottom = is_selected ? client_h : (client_h - 1);
+
+      int cidx = state->tabs[i].color_index;
+      const TabColorDef *col = tabhost_get_color(cidx);
+
+      /* Flat solid background */
+      COLORREF bg = is_selected ? col->bg
+                                : ((i == state->hover_tab) ? RGB(255, 255, 255)
+                                                           : col->inactive_bg);
+      HBRUSH hbr = CreateSolidBrush(bg);
+      FillRect(mem_dc, &rc_tab, hbr);
+      DeleteObject(hbr);
+
+      /* Top accent stripe */
+      int accent_h = MulDiv(is_selected ? 3 : 2, dpi, 96);
+      if (accent_h < 2)
+        accent_h = 2;
+      RECT rc_acc = rc_tab;
+      rc_acc.bottom = rc_tab.top + accent_h;
+      HBRUSH hbr_acc = CreateSolidBrush(col->accent);
+      FillRect(mem_dc, &rc_acc, hbr_acc);
+      DeleteObject(hbr_acc);
+
+      /* Flat well-defined outline (clean 1px border) */
+      COLORREF border_col = is_selected ? col->accent : RGB(175, 185, 198);
+      HPEN pen_tab = CreatePen(PS_SOLID, 1, border_col);
+      SelectObject(mem_dc, pen_tab);
+
+      /* Left outline */
+      MoveToEx(mem_dc, rc_tab.left, rc_tab.top, NULL);
+      LineTo(mem_dc, rc_tab.left, rc_tab.bottom);
+
+      /* Top outline */
+      MoveToEx(mem_dc, rc_tab.left, rc_tab.top, NULL);
+      LineTo(mem_dc, rc_tab.right - 1, rc_tab.top);
+
+      /* Right outline */
+      MoveToEx(mem_dc, rc_tab.right - 1, rc_tab.top, NULL);
+      LineTo(mem_dc, rc_tab.right - 1, rc_tab.bottom);
+
+      if (!is_selected) {
+        /* Bottom outline along baseline */
+        MoveToEx(mem_dc, rc_tab.left, rc_tab.bottom, NULL);
+        LineTo(mem_dc, rc_tab.right, rc_tab.bottom);
+      } else {
+        /* Flush connection with content: erase baseline under active tab */
+        HPEN pen_flush = CreatePen(PS_SOLID, 1, bg);
+        SelectObject(mem_dc, pen_flush);
+        MoveToEx(mem_dc, rc_tab.left + 1, client_h - 1, NULL);
+        LineTo(mem_dc, rc_tab.right - 1, client_h - 1);
+        SelectObject(mem_dc, pen_tab);
+        DeleteObject(pen_flush);
+      }
+      DeleteObject(pen_tab);
+
+      /* Flat crisp title text */
+      SetTextColor(mem_dc, col->text);
+      RECT rc_txt = rc_tab;
+      int pad_h = MulDiv(8, dpi, 96);
+      rc_txt.left += pad_h;
+      rc_txt.right -= pad_h;
+      rc_txt.top += accent_h;
+      if (!is_selected) {
+        rc_txt.bottom -= 1;
+      }
+      DrawTextA(mem_dc, state->tabs[i].title, -1, &rc_txt,
+                DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
+  }
+
+  /* Blit from double-buffer to screen */
+  BitBlt(hdc, 0, 0, client_w, client_h, mem_dc, 0, 0, SRCCOPY);
+
+  SelectObject(mem_dc, old_font);
+  SelectObject(mem_dc, old_pen);
+  DeleteObject(pen_base);
+  SelectObject(mem_dc, old_bm);
+  DeleteObject(mem_bm);
+  DeleteDC(mem_dc);
+
+  EndPaint(hwnd, &ps);
+}
+
+/*
+ * Subclass procedure for Tab Control: intercepts WM_PAINT for flat rendering
+ * and tracks hover state.
+ */
+static LRESULT CALLBACK TabCtrlSubclassProc(HWND hwnd, UINT msg, WPARAM wParam,
+                                            LPARAM lParam, UINT_PTR uIdSubclass,
+                                            DWORD_PTR dwRefData) {
+  TabHostState *state = (TabHostState *)dwRefData;
+  switch (msg) {
+  case WM_ERASEBKGND:
+    return 1;
+
+  case WM_MOUSEMOVE: {
+    POINT pt = {(short)LOWORD(lParam), (short)HIWORD(lParam)};
+    TCHITTESTINFO hti = {pt, 0};
+    int hit = TabCtrl_HitTest(hwnd, &hti);
+    if (state && hit != state->hover_tab) {
+      state->hover_tab = hit;
+      InvalidateRect(hwnd, NULL, FALSE);
+      TRACKMOUSEEVENT tme = {sizeof(tme), TME_LEAVE, hwnd, 0};
+      TrackMouseEvent(&tme);
+    }
+    break;
+  }
+
+  case WM_MOUSELEAVE:
+    if (state && state->hover_tab != -1) {
+      state->hover_tab = -1;
+      InvalidateRect(hwnd, NULL, FALSE);
+    }
+    break;
+
+  case WM_PAINT:
+    if (state) {
+      tabhost_paint_flat_tab_bar(state, hwnd);
+      return 0;
+    }
+    break;
+
+  case WM_NCDESTROY:
+    RemoveWindowSubclass(hwnd, TabCtrlSubclassProc, uIdSubclass);
+    break;
+  }
+  return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+/*
+ * Subclass procedure for compact Plus button: renders completely flat with
+ * well-defined borders and hover/press feedback.
+ */
+static LRESULT CALLBACK PlusBtnSubclassProc(HWND hwnd, UINT msg, WPARAM wParam,
+                                            LPARAM lParam, UINT_PTR uIdSubclass,
+                                            DWORD_PTR dwRefData) {
+  TabHostState *state = (TabHostState *)dwRefData;
+  switch (msg) {
+  case WM_ERASEBKGND:
+    return 1;
+
+  case WM_MOUSEMOVE:
+    if (state && !state->plus_hover) {
+      state->plus_hover = true;
+      InvalidateRect(hwnd, NULL, FALSE);
+      TRACKMOUSEEVENT tme = {sizeof(tme), TME_LEAVE, hwnd, 0};
+      TrackMouseEvent(&tme);
+    }
+    break;
+
+  case WM_MOUSELEAVE:
+    if (state && state->plus_hover) {
+      state->plus_hover = false;
+      InvalidateRect(hwnd, NULL, FALSE);
+    }
+    break;
+
+  case WM_LBUTTONDOWN:
+    if (state) {
+      state->plus_pressed = true;
+      InvalidateRect(hwnd, NULL, FALSE);
+    }
+    break;
+
+  case WM_LBUTTONUP:
+    if (state) {
+      state->plus_pressed = false;
+      InvalidateRect(hwnd, NULL, FALSE);
+    }
+    break;
+
+  case WM_PAINT:
+    if (state) {
+      PAINTSTRUCT ps;
+      HDC hdc = BeginPaint(hwnd, &ps);
+      RECT rc;
+      GetClientRect(hwnd, &rc);
+      bool is_enabled = IsWindowEnabled(hwnd);
+
+      COLORREF bg;
+      if (!is_enabled) {
+        bg = RGB(232, 235, 240);
+      } else if (state->plus_pressed) {
+        bg = RGB(216, 222, 232);
+      } else if (state->plus_hover) {
+        bg = RGB(228, 234, 242);
+      } else {
+        bg = RGB(244, 246, 249);
+      }
+      HBRUSH hbr_bg = CreateSolidBrush(bg);
+      FillRect(hdc, &rc, hbr_bg);
+      DeleteObject(hbr_bg);
+
+      /* Crisp flat border outline */
+      COLORREF border_col = (!is_enabled)
+                                ? RGB(205, 212, 220)
+                                : (state->plus_hover || state->plus_pressed)
+                                      ? RGB(140, 155, 172)
+                                      : RGB(175, 185, 198);
+      HPEN pen_border = CreatePen(PS_SOLID, 1, border_col);
+      HPEN old_pen = (HPEN)SelectObject(hdc, pen_border);
+
+      MoveToEx(hdc, rc.left, rc.top, NULL);
+      LineTo(hdc, rc.right - 1, rc.top);
+      LineTo(hdc, rc.right - 1, rc.bottom - 1);
+      LineTo(hdc, rc.left, rc.bottom - 1);
+      LineTo(hdc, rc.left, rc.top);
+
+      SelectObject(hdc, old_pen);
+      DeleteObject(pen_border);
+
+      /* Centered '+' character */
+      HFONT hFont = state->hfont ? state->hfont : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+      HFONT old_font = (HFONT)SelectObject(hdc, hFont);
+      SetBkMode(hdc, TRANSPARENT);
+      SetTextColor(hdc, is_enabled ? RGB(40, 50, 60) : RGB(160, 170, 180));
+      DrawTextA(hdc, "+", 1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+      SelectObject(hdc, old_font);
+
+      EndPaint(hwnd, &ps);
+      return 0;
+    }
+    break;
+
+  case WM_NCDESTROY:
+    RemoveWindowSubclass(hwnd, PlusBtnSubclassProc, uIdSubclass);
+    break;
+  }
+  return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
 static void tabhost_update_layout(TabHostState *state) {
@@ -951,10 +1248,20 @@ static LRESULT CALLBACK TabHostWndProc(HWND hwnd, UINT msg, WPARAM wParam,
   TabHostState *state = tabhost_get_state(hwnd);
 
   switch (msg) {
+  case WM_ERASEBKGND: {
+    HDC hdc = (HDC)wParam;
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    HBRUSH br = CreateSolidBrush(RGB(236, 239, 243));
+    FillRect(hdc, &rc, br);
+    DeleteObject(br);
+    return 1;
+  }
   case WM_CREATE: {
     state = (TabHostState *)calloc(1, sizeof(TabHostState));
     state->hwnd = hwnd;
     state->active_tab = -1;
+    state->hover_tab = -1;
     SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)state);
 
     /* Initialize Common Controls for Tab Control */
@@ -963,13 +1270,16 @@ static LRESULT CALLBACK TabHostWndProc(HWND hwnd, UINT msg, WPARAM wParam,
     icex.dwICC = ICC_TAB_CLASSES;
     InitCommonControlsEx(&icex);
 
-    /* Create Tab Control with TCS_OWNERDRAWFIXED */
+    /* Create Tab Control with TCS_OWNERDRAWFIXED and flat subclass */
     state->tab_ctrl = CreateWindowExA(0, WC_TABCONTROLA, "",
                                       WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS |
                                           TCS_FOCUSNEVER | TCS_TOOLTIPS |
                                           TCS_OWNERDRAWFIXED,
                                       0, 0, 100, TAB_BAR_HEIGHT, hwnd,
                                       (HMENU)100, GetModuleHandle(NULL), NULL);
+    if (state->tab_ctrl) {
+      SetWindowSubclass(state->tab_ctrl, TabCtrlSubclassProc, 1, (DWORD_PTR)state);
+    }
 
     /* Turn off visual style theming so owner-draw tab colors render cleanly */
     typedef HRESULT(WINAPI * SetWindowTheme_fn)(HWND, LPCWSTR, LPCWSTR);
@@ -994,7 +1304,7 @@ static LRESULT CALLBACK TabHostWndProc(HWND hwnd, UINT msg, WPARAM wParam,
       }
     }
 
-    /* Create compact "+" button for adding new tabs */
+    /* Create compact "+" button for adding new tabs with flat subclass */
     state->plus_btn = CreateWindowExA(
         0, "BUTTON", "+",
         WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_PUSHBUTTON,
@@ -1002,6 +1312,7 @@ static LRESULT CALLBACK TabHostWndProc(HWND hwnd, UINT msg, WPARAM wParam,
         PLUS_BTN_WIDTH, PLUS_BTN_HEIGHT, hwnd, (HMENU)(UINT_PTR)IDM_TAB_NEW,
         GetModuleHandle(NULL), NULL);
     if (state->plus_btn) {
+      SetWindowSubclass(state->plus_btn, PlusBtnSubclassProc, 2, (DWORD_PTR)state);
       if (state->hfont) {
         SendMessage(state->plus_btn, WM_SETFONT, (WPARAM)state->hfont, TRUE);
       }
@@ -1381,7 +1692,7 @@ HWND tabhost_create_window(HINSTANCE inst, int show,
   tabhost_init(inst);
 
   HWND host_hwnd = CreateWindowExA(
-      WS_EX_WINDOWEDGE, PUTTY_TABHOST_CLASS, "PuTTY",
+      WS_EX_APPWINDOW, PUTTY_TABHOST_CLASS, "PuTTY",
       WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, CW_USEDEFAULT,
       CW_USEDEFAULT, 820, 560, NULL, NULL, inst, NULL);
 
